@@ -157,7 +157,9 @@ const client = new Client({
 client.on('qr', qr => {
   currentQR = qr;
   console.log('\n✅ QR Code מוכן! פתח את הקישור הבא בדפדפן וסרוק:');
-  console.log('👉  https://' + (process.env.RAILWAY_PUBLIC_DOMAIN || 'localhost:3000') + '\n');
+  const publicUrl = process.env.PUBLIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || 'http://localhost:3000';
+  console.log('👉  ' + publicUrl + '\n');
+  console.log('💡 (תשתמש ב-PUBLIC_URL env var אם צריך להחליף את ה-URL)\n');
 });
 
 client.on('ready', () => {
