@@ -1,0 +1,8 @@
+services:
+  - type: worker
+    name: sami-telegram-bot
+    env: node
+    plan: starter
+    branch: main
+    buildCommand: npm install
+    startCommand: npm start

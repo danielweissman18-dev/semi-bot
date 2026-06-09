@@ -8,7 +8,11 @@ const cron = require('node-cron');
 const config = require('./config');
 const { generateQuotePDF } = require('./pdfGenerator');
 
-const TOKEN = process.env.TELEGRAM_TOKEN || '8811218028:AAGYW2ojPgRm_irq5lZQ9SWKwngM9Wn3yXU';
+const TOKEN = process.env.TELEGRAM_TOKEN;
+if (!TOKEN) {
+  console.error('❌ TELEGRAM_TOKEN is required in environment variables.');
+  process.exit(1);
+}
 const bot = new Telegraf(TOKEN);
 
 // ─── DB helpers ──────────────────────────────────────────────
