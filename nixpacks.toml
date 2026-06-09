@@ -1,6 +1,2 @@
 [phases.setup]
-nixPkgs = ["chromium", "nodejs_18"]
-
-[variables]
-PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
-PUPPETEER_EXECUTABLE_PATH = "/run/current-system/sw/bin/chromium"
+nixPkgs = ["nodejs_18"]
