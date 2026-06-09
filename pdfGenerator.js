@@ -9,9 +9,11 @@ const config      = require('./config');
 
 async function generateQuotePDF({ clientName, businessName, photos, videos, total, pricePhoto, priceVideo }) {
   const quotesDir = path.join(__dirname, 'quotes');
-  if (!fs.existsSync(quotesDir)) fs.mkdirSync(quotesDir);
+  if (!fs.existsSync(quotesDir)) fs.mkdirSync(quotesDir, { recursive: true });
 
-  const outputPath = path.join(quotesDir, `${businessName}. הצעת מחיר.pdf`);
+  const safeName = businessName.replace(/[<>:"/\\|?*\x00-\x1F]/g, '').trim() || 'הצעת מחיר';
+  const fileName = `${safeName} - הצעת מחיר ${Date.now()}.pdf`;
+  const outputPath = path.join(quotesDir, fileName);
   const today      = new Date().toLocaleDateString('he-IL', { year: 'numeric', month: 'long', day: 'numeric' });
   const quoteNum   = `QT-${Date.now().toString().slice(-6)}`;
   const photoTotal = photos * pricePhoto;

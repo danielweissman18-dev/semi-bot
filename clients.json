@@ -1,1 +1,16 @@
-[]
+[
+  {
+    "name": "itay weissman",
+    "business": "itay perfums",
+    "status": "ממתין למקדמה",
+    "addedAt": "2026-06-09T18:06:06.112Z",
+    "updatedAt": "2026-06-09T18:27:15.128Z"
+  },
+  {
+    "name": "אהרון ליאת טסט",
+    "business": "Deviweissman",
+    "status": "Fishined",
+    "addedAt": "2026-06-09T18:52:32.955Z",
+    "updatedAt": "2026-06-09T18:52:32.955Z"
+  }
+]
