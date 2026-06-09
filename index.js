@@ -860,6 +860,7 @@ bot.on('text', async ctx => {
   const text = ctx.message.text.trim();
 
   const lower = text.toLowerCase();
+  const clean = lower.replace(/^\//, '').trim();
 
   const session = getSession(userId);
 
@@ -871,7 +872,7 @@ bot.on('text', async ctx => {
 
 
 
-  if (['exit-chat', '/exit-chat'].includes(lower)) {
+  if (['exit-chat'].includes(clean)) {
 
     clearChatMode(ctx.chat.id);
 
@@ -895,7 +896,7 @@ bot.on('text', async ctx => {
 
 
 
-  if (['תפריט', 'מנו', 'menu', '0'].includes(lower)) {
+  if (['תפריט', 'מנו', 'menu', '0'].includes(clean)) {
 
     return ctx.reply(buildQuickReply(), { parse_mode: 'Markdown', ...buildMainKeyboard() });
 
@@ -903,7 +904,7 @@ bot.on('text', async ctx => {
 
 
 
-  if (['1', 'הוספת לקוח', 'addclient'].includes(lower)) {
+  if (['1', 'הוספת לקוח', 'addclient'].includes(clean)) {
 
     const session = getSession(userId);
 
@@ -917,7 +918,7 @@ bot.on('text', async ctx => {
 
 
 
-  if (['2', 'שינוי סטטוס לקוח', 'עדכון סטטוס', 'updateclient'].includes(lower)) {
+  if (['2', 'שינוי סטטוס לקוח', 'עדכון סטטוס', 'updateclient'].includes(clean)) {
 
     const clients = getClients();
 
@@ -939,7 +940,7 @@ bot.on('text', async ctx => {
 
 
 
-  if (['3', 'יצירת הצעת מחיר', 'quote'].includes(lower)) {
+  if (['3', 'יצירת הצעת מחיר', 'quote'].includes(clean)) {
 
     const clients = getClients();
 
@@ -971,7 +972,7 @@ bot.on('text', async ctx => {
 
   }
 
-  if (lower.startsWith('עדכן סטטוס') || lower.startsWith('update status')) {
+  if (clean.startsWith('עדכן סטטוס') || clean.startsWith('update status')) {
 
     const parts = text.split(' ').slice(2);
 
@@ -1005,7 +1006,7 @@ bot.on('text', async ctx => {
 
 
 
-  if (lower.startsWith('הצעת מחיר') || lower.startsWith('quote')) {
+  if (clean.startsWith('הצעת מחיר') || clean.startsWith('quote')) {
 
     const query = text.replace(/^(הצעת מחיר|quote)\s*/i, '');
 
@@ -1045,7 +1046,8 @@ async function handleConversation(ctx, userId, text, session) {
 
 
 
-  if (['/cancel', 'ביטול', 'cancel'].includes(text.toLowerCase())) {
+  const cmd = text.toLowerCase().replace(/^\//, '').trim();
+  if (['cancel', 'ביטול'].includes(cmd)) {
 
     clearSession(userId);
 
