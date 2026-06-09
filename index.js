@@ -1,43 +1,15 @@
 // ====================================
-//  סמי בוט – קובץ ראשי
+//  סמי בוט – קובץ ראשי (Telegram)
 // ====================================
 
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
-const QRCode  = require('qrcode');
-const express = require('express');
-const fs      = require('fs');
-const { execSync } = require('child_process');
-const puppeteer = require('puppeteer');
-const config  = require('./config');
-const { startScheduler }   = require('./scheduler');
+const { Telegraf } = require('telegraf');
+const fs = require('fs');
+const cron = require('node-cron');
+const config = require('./config');
 const { generateQuotePDF } = require('./pdfGenerator');
 
-const systemChromiumPath = '/run/current-system/sw/bin/chromium';
-
-// ─── QR Web Server ────────────────────────────────────────────
-const app = express();
-let currentQR = null;
-
-app.get('/', async (req, res) => {
-  if (!currentQR) {
-    return res.send('<h2 style="font-family:sans-serif;padding:40px">⏳ ממתין ל-QR Code... רענן את הדף בעוד שנייה.</h2>');
-  }
-  const imgData = await QRCode.toDataURL(currentQR, { width: 400, margin: 2 });
-  res.send(`
-    <html><head><meta charset="UTF-8">
-    <meta http-equiv="refresh" content="30">
-    <style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#111;font-family:sans-serif;color:#fff}
-    img{border:8px solid #fff;border-radius:16px}h1{margin-bottom:24px}p{color:#aaa;margin-top:16px}</style>
-    </head><body>
-    <h1>📱 סרוק עם ווצאפ</h1>
-    <img src="${imgData}">
-    <p>הדף מתרענן אוטומטית כל 30 שניות</p>
-    </body></html>
-  `);
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🌐 QR Server פעיל על פורט ${PORT}`));
+const TOKEN = process.env.TELEGRAM_TOKEN || '8811218028:AAGYW2ojPgRm_irq5lZQ9SWKwngM9Wn3yXU';
+const bot = new Telegraf(TOKEN);
 
 // ─── DB helpers ──────────────────────────────────────────────
 function getClients() {
@@ -48,427 +20,320 @@ function saveClients(data) {
   fs.writeFileSync('./clients.json', JSON.stringify(data, null, 2), 'utf8');
 }
 
-// ─── Session state per phone ──────────────────────────────────
+// ─── Session state per user ──────────────────────────────────
 const sessions = {};
-function getSession(phone) {
-  if (!sessions[phone]) sessions[phone] = { state: null, data: {} };
-  return sessions[phone];
+function getSession(userId) {
+  if (!sessions[userId]) sessions[userId] = { state: null, data: {} };
+  return sessions[userId];
 }
-function clearSession(phone) {
-  sessions[phone] = { state: null, data: {} };
-}
-
-// ─── Helpers ──────────────────────────────────────────────────
-const AUTHORIZED = [config.phone1, config.phone2];
-
-function isAuthorized(number) {
-  return AUTHORIZED.includes(number.replace('@c.us', ''));
+function clearSession(userId) {
+  sessions[userId] = { state: null, data: {} };
 }
 
-function getUserName(phone) {
-  const num = phone.replace('@c.us', '');
-  if (num === config.phone1) return config.name1;
-  if (num === config.phone2) return config.name2;
-  return 'משתמש';
-}
+// ─── Bot Commands ────────────────────────────────────────────
 
-// ─── מציא נתיב Chromium אוטומטית ─────────────────────────────
-function findChromium() {
-  const isWindows = process.platform === 'win32';
-  const envPath = process.env.PUPPETEER_EXECUTABLE_PATH;
-
-  if (envPath) {
-    if (fs.existsSync(envPath)) {
-      console.log('✅ משתמש ב-PUPPETEER_EXECUTABLE_PATH:', envPath);
-      return envPath;
-    }
-    console.warn(`⚠️ PUPPETEER_EXECUTABLE_PATH לא נמצא: ${envPath}. מתעלם ממנו.`);
-    delete process.env.PUPPETEER_EXECUTABLE_PATH;
-  }
-
-  const candidatePaths = [
-    '/run/current-system/sw/bin/chromium',
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/google-chrome',
-  ];
-
-  if (isWindows) {
-    candidatePaths.unshift(
-      `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`,
-      `${process.env.PROGRAMFILES}\\Google\\Chrome\\Application\\chrome.exe`,
-      `${process.env['PROGRAMFILES(X86)']}\\Google\\Chrome\\Application\\chrome.exe`,
-      `${process.env.LOCALAPPDATA}\\Microsoft\\Edge\\Application\\msedge.exe`,
-      `${process.env.PROGRAMFILES}\\Microsoft\\Edge\\Application\\msedge.exe`,
-      `${process.env['PROGRAMFILES(X86)']}\\Microsoft\\Edge\\Application\\msedge.exe`
-    );
-  }
-
-  for (const p of candidatePaths) {
-    if (!p) continue;
-    if (fs.existsSync(p)) {
-      console.log('✅ נמצא Chromium/Chrome:', p);
-      return p;
-    }
-  }
-
-  if (!isWindows) {
-    try {
-      const found = execSync('which chromium || which chromium-browser || which google-chrome', { encoding: 'utf8' })
-        .trim()
-        .split('\n')[0];
-      if (found && fs.existsSync(found)) {
-        console.log('✅ נמצא Chromium דרך which:', found);
-        return found;
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  if (process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD === 'true') {
-    console.warn('⚠️ לא נמצא דפדפן במערכת, בוטל PUPPETEER_SKIP_CHROMIUM_DOWNLOAD כדי לאפשר הורדה');
-    delete process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD;
-  }
-
-  console.log('⚠️ לא נמצא Chromium/Chrome – מנסה ללא נתיב');
-  return undefined;
-}
-
-// ─── WhatsApp Client ──────────────────────────────────────────
-const chromiumPath = findChromium() || puppeteer.executablePath();
-console.log('Using Chromium path:', chromiumPath);
-const client = new Client({
-  authStrategy: new LocalAuth(),
-  puppeteer: {
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--single-process',
-      '--no-zygote'
-    ],
-    headless: true,
-    ...(chromiumPath ? { executablePath: chromiumPath } : {})
-  }
+bot.start(ctx => {
+  ctx.reply(
+    `🤖 *ברוכים הבאים ל-סמי בוט!*\n\n` +
+    `📋 שלח /menu כדי להתחיל\n` +
+    `❓ שלח /help לקבל עזרה\n` +
+    `📞 /clients - רשימת לקוחות`,
+    { parse_mode: 'Markdown' }
+  );
 });
 
-client.on('qr', qr => {
-  currentQR = qr;
-  console.log('\n✅ QR Code מוכן! פתח את הקישור הבא בדפדפן וסרוק:');
-  const publicUrl = process.env.PUBLIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || 'http://localhost:3000';
-  console.log('👉  ' + publicUrl + '\n');
-  console.log('💡 (תשתמש ב-PUBLIC_URL env var אם צריך להחליף את ה-URL)\n');
+bot.command('help', ctx => {
+  ctx.reply(
+    `📖 *הוראות שימוש*\n\n` +
+    `*פקודות ראשיות:*\n` +
+    `/menu - תפריט ראשי\n` +
+    `/clients - רשימת לקוחות\n` +
+    `/help - הוראות\n\n` +
+    `*דוגמאות:*\n` +
+    `שלח "1" להוספת לקוח\n` +
+    `שלח "2" לעדכון סטטוס\n` +
+    `שלח "3" ליצירת הצעה\n\n` +
+    `📧 כל יום ב-9:30 בוקר - סטטוסים`,
+    { parse_mode: 'Markdown' }
+  );
 });
 
-client.on('ready', () => {
-  console.log('✅ סמי מחובר ומוכן!');
-  startScheduler(client);
+bot.command('menu', ctx => {
+  ctx.reply(
+    `🤖 *${config.botName} | תפריט ראשי*\n\n` +
+    `1️⃣ הוספת לקוח\n` +
+    `2️⃣ שינוי סטטוס לקוח\n` +
+    `3️⃣ יצירת הצעת מחיר\n\n` +
+    `_שלח מספר או שם אפשרות_`,
+    { parse_mode: 'Markdown' }
+  );
 });
 
-client.on('disconnected', reason => {
-  console.log('⚠️ סמי התנתק:', reason);
+bot.command('clients', ctx => {
+  const clients = getClients();
+  if (clients.length === 0) {
+    return ctx.reply('❌ אין לקוחות ברשימה עדיין. שלח *1* להוספת לקוח.', { parse_mode: 'Markdown' });
+  }
+  const list = clients
+    .map((c, i) => `${i + 1}. *${c.business}* (${c.name})\n   📌 ${c.status}`)
+    .join('\n');
+  ctx.reply(`📋 *לקוחות:*\n\n${list}`, { parse_mode: 'Markdown' });
 });
 
 // ─── Message Handler ──────────────────────────────────────────
-client.on('message', async msg => {
-  const phone = msg.from;
-
-  // התעלם מהודעות קבוצה + מספרים לא מורשים
-  if (msg.isGroupMsg || !isAuthorized(phone)) return;
-
-  const text     = msg.body.trim();
-  const session  = getSession(phone);
-  const userName = getUserName(phone);
+bot.on('text', async ctx => {
+  const userId = ctx.from.id;
+  const text = ctx.message.text.trim();
+  const session = getSession(userId);
 
   // אם יש סשן פתוח – המשך שיחה
   if (session.state) {
-    await handleConversation(msg, phone, text, session, userName);
+    await handleConversation(ctx, userId, text, session);
     return;
   }
-
-  // ── פקודות ראשיות ────────────────────────────────────────────
 
   // תפריט
   if (['תפריט', 'מנו', 'menu', '0'].includes(text.toLowerCase())) {
-    await msg.reply(
-`🤖 *${config.botName} | תפריט ראשי*
-
-1️⃣  הוספת לקוח
-2️⃣  שינוי סטטוס לקוח
-3️⃣  יצירת הצעת מחיר
-
-_שלח מספר או שם אפשרות_`
+    return ctx.reply(
+      `🤖 *${config.botName} | תפריט ראשי*\n\n` +
+      `1️⃣ הוספת לקוח\n` +
+      `2️⃣ שינוי סטטוס לקוח\n` +
+      `3️⃣ יצירת הצעת מחיר\n\n` +
+      `_שלח מספר או שם אפשרות_`,
+      { parse_mode: 'Markdown' }
     );
-    return;
   }
 
-  if (text === '1' || text === 'הוספת לקוח') {
+  // אפשרות 1: הוספת לקוח
+  if (text === '1' || text.toLowerCase() === 'הוספת לקוח') {
     session.state = 'add_name';
-    session.data  = {};
-    await msg.reply('➕ *הוספת לקוח חדש*\n\nמה שם הלקוח / איש הקשר?\n\n_שלח *ביטול* בכל שלב לביטול_');
-    return;
+    session.data = {};
+    return ctx.reply(
+      '➕ *הוספת לקוח חדש*\n\nמה שם הלקוח / איש הקשר?\n\n_שלח *ביטול* בכל שלב לביטול_',
+      { parse_mode: 'Markdown' }
+    );
   }
 
-  if (text === '2' || text === 'שינוי סטטוס לקוח') {
+  // אפשרות 2: עדכון סטטוס
+  if (text === '2' || text.toLowerCase() === 'שינוי סטטוס לקוח') {
     const clients = getClients();
     if (clients.length === 0) {
-      await msg.reply('❌ אין לקוחות ברשימה עדיין. שלח *1* להוספת לקוח.');
-      return;
+      return ctx.reply('❌ אין לקוחות ברשימה עדיין. שלח *1* להוספת לקוח.', { parse_mode: 'Markdown' });
     }
     const list = clients.map((c, i) => `${i + 1}. *${c.business}* (${c.name})`).join('\n');
     session.state = 'update_select';
-    session.data  = {};
-    await msg.reply(`✏️ *עדכון סטטוס*\n\nשלח שם עסק לעדכון:\n\n${list}`);
-    return;
+    session.data = {};
+    return ctx.reply(`📋 בחר לקוח:\n\n${list}`, { parse_mode: 'Markdown' });
   }
 
-  if (text === '3' || text === 'יצירת הצעת מחיר') {
-    session.state = 'quote_client';
-    session.data  = {};
-    await msg.reply(`📄 *יצירת הצעת מחיר*\n\nמה שם הלקוח / איש הקשר?\n\n_שלח *ביטול* בכל שלב לביטול_`);
-    return;
-  }
-
-  // ── Natural language – "שם עסק אישר את ההצעה" ────────────────
-  const approvalRx = /^(.+?)\s+אישר(?:ה)?\s+את\s+ה?הצעה/;
-  const approvalMatch = text.match(approvalRx);
-  if (approvalMatch) {
-    const biz     = approvalMatch[1].trim();
+  // אפשרות 3: יצירת הצעה
+  if (text === '3' || text.toLowerCase() === 'יצירת הצעת מחיר') {
     const clients = getClients();
-    if (clients.find(c => c.business === biz)) {
-      await msg.reply(`ℹ️ *${biz}* כבר קיים ברשימת הלקוחות הפעילים.`);
-    } else {
-      session.state      = 'approval_status';
-      session.data.biz   = biz;
-      await msg.reply(`🎉 *${biz} אישר את ההצעה!*\n\nמה הסטטוס ההתחלתי של הפרויקט?`);
+    if (clients.length === 0) {
+      return ctx.reply('❌ אין לקוחות ברשימה עדיין. שלח *1* להוספת לקוח.', { parse_mode: 'Markdown' });
     }
-    return;
+    const list = clients.map((c, i) => `${i + 1}. *${c.business}* (${c.name})`).join('\n');
+    session.state = 'quote_select';
+    session.data = {};
+    return ctx.reply(`📋 בחר לקוח להצעה:\n\n${list}`, { parse_mode: 'Markdown' });
   }
 
-  // ── Natural language – "שם עסק" + סטטוס חופשי ────────────────
-  const clients     = getClients();
-  const matchClient = clients.find(c => text.startsWith(c.business));
-  if (matchClient) {
-    const newStatus = text.slice(matchClient.business.length).trim();
-    if (newStatus) {
-      const idx = clients.indexOf(matchClient);
-      clients[idx].status = newStatus;
-      clients[idx].updatedAt = new Date().toISOString();
-      saveClients(clients);
-      await msg.reply(`✅ *סטטוס עודכן*\n\n*${matchClient.business}* (${matchClient.name})\n📝 ${newStatus}`);
-    } else {
-      // הצגת פרטי לקוח
-      await msg.reply(`📋 *${matchClient.business}*\n👤 לקוח: ${matchClient.name}\n📝 סטטוס: ${matchClient.status}`);
-    }
-    return;
-  }
-
-  // ── Default ────────────────────────────────────────────────────
-  await msg.reply(`👋 היי ${userName}!\nשלח *תפריט* כדי להתחיל.`);
+  ctx.reply('❓ לא הבנתי. שלח /menu לתפריט או /help לעזרה');
 });
 
-// ─── Conversation State Machine ───────────────────────────────
-async function handleConversation(msg, phone, text, session, userName) {
+// ─── Conversation Handler ─────────────────────────────────────
+async function handleConversation(ctx, userId, text, session) {
+  const state = session.state;
+  const data = session.data;
+
   // ביטול בכל שלב
-  if (['ביטול', 'cancel', 'בטל'].includes(text.toLowerCase())) {
-    clearSession(phone);
-    await msg.reply('❌ הפעולה בוטלה.\nשלח *תפריט* להמשך.');
-    return;
+  if (['ביטול', 'cancel'].includes(text.toLowerCase())) {
+    clearSession(userId);
+    return ctx.reply('❌ בוטל. שלח /menu להתחלה מחדש.');
   }
 
-  switch (session.state) {
+  try {
+    if (state === 'add_name') {
+      data.name = text;
+      session.state = 'add_business';
+      return ctx.reply('🏢 שם העסק?', { parse_mode: 'Markdown' });
+    }
 
-    // ── הוספת לקוח ──────────────────────────────────────────────
-    case 'add_name':
-      session.data.name  = text;
-      session.state      = 'add_business';
-      await msg.reply('מה שם העסק?');
-      break;
+    if (state === 'add_business') {
+      data.business = text;
+      session.state = 'add_status';
+      return ctx.reply('📝 מה הסטטוס הנוכחי של הפרויקט?', { parse_mode: 'Markdown' });
+    }
 
-    case 'add_business':
-      session.data.business = text;
-      session.state         = 'add_status';
-      await msg.reply('מה הסטטוס הנוכחי של הפרויקט?\n\n_לדוגמה: ממתין לתשלום ראשוני_');
-      break;
-
-    case 'add_status': {
+    if (state === 'add_status') {
       const clients = getClients();
       clients.push({
-        name:      session.data.name,
-        business:  session.data.business,
-        status:    text,
-        addedAt:   new Date().toISOString(),
+        name: data.name,
+        business: data.business,
+        status: text,
+        addedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
       saveClients(clients);
-      clearSession(phone);
-      await msg.reply(
-`✅ *לקוח נוסף בהצלחה!*
-
-👤 ${session.data.name}
-🏢 ${session.data.business}
-📝 ${text}
-
-יופיע בעדכון הבוקר הבא ב-${config.morningTime} ☀️`
+      clearSession(userId);
+      return ctx.reply(
+        `✅ *לקוח נוסף בהצלחה!*\n\n👤 ${data.name}\n🏢 ${data.business}\n📝 ${text}`,
+        { parse_mode: 'Markdown' }
       );
-      break;
     }
 
-    // ── עדכון סטטוס ─────────────────────────────────────────────
-    case 'update_select': {
+    if (state === 'update_select') {
+      const idx = parseInt(text) - 1;
       const clients = getClients();
-      const found   = clients.find(c =>
-        c.business.includes(text) || text.includes(c.business)
-      );
-      if (!found) {
-        await msg.reply('❌ לא מצאתי עסק כזה. נסה שוב או שלח *ביטול*.');
-        return;
+      if (idx < 0 || idx >= clients.length) {
+        return ctx.reply('❌ מספר לא תקין. נסה שוב.', { parse_mode: 'Markdown' });
       }
-      session.data.biz  = found.business;
-      session.state     = 'update_status';
-      await msg.reply(
-`✏️ *${found.business}* (${found.name})
-סטטוס נוכחי: ${found.status}
-
-מה הסטטוס החדש?`
+      data.clientIdx = idx;
+      session.state = 'update_status';
+      return ctx.reply(
+        `✏️ *${clients[idx].business}*\nסטטוס נוכחי: ${clients[idx].status}\n\nמה הסטטוס החדש?`,
+        { parse_mode: 'Markdown' }
       );
-      break;
     }
 
-    case 'update_status': {
+    if (state === 'update_status') {
+      const idx = data.clientIdx;
       const clients = getClients();
-      const idx     = clients.findIndex(c => c.business === session.data.biz);
-      if (idx !== -1) {
-        clients[idx].status    = text;
-        clients[idx].updatedAt = new Date().toISOString();
-        saveClients(clients);
-      }
-      clearSession(phone);
-      await msg.reply(`✅ *סטטוס עודכן!*\n\n*${session.data.biz}*\n📝 ${text}`);
-      break;
-    }
-
-    // ── הצעת מחיר ───────────────────────────────────────────────
-    case 'quote_client':
-      session.data.clientName = text;
-      session.state           = 'quote_business';
-      await msg.reply('מה שם העסק?');
-      break;
-
-    case 'quote_business':
-      session.data.businessName = text;
-      session.state             = 'quote_photos';
-      await msg.reply(`כמה *תמונות*? (₪${config.pricePhoto} לתמונה)\n\n_שלח 0 אם אין תמונות_`);
-      break;
-
-    case 'quote_photos': {
-      const n = parseInt(text);
-      if (isNaN(n) || n < 0) { await msg.reply('❌ נא להזין מספר תקין (לדוגמה: 5 או 0)'); return; }
-      session.data.photos = n;
-      session.state       = 'quote_videos';
-      await msg.reply(`כמה *סרטונים*? (₪${config.priceVideo} לסרטון)\n\n_שלח 0 אם אין סרטונים_`);
-      break;
-    }
-
-    case 'quote_videos': {
-      const n = parseInt(text);
-      if (isNaN(n) || n < 0) { await msg.reply('❌ נא להזין מספר תקין'); return; }
-      session.data.videos = n;
-
-      const autoTotal = (session.data.photos * config.pricePhoto) + (n * config.priceVideo);
-      session.data.total  = autoTotal;
-      session.state       = 'quote_confirm';
-
-      await msg.reply(
-`💰 *סיכום הצעת מחיר*
-
-👤 ${session.data.clientName}
-🏢 ${session.data.businessName}
-📸 ${session.data.photos} תמונות × ₪${config.pricePhoto} = ₪${(session.data.photos * config.pricePhoto).toLocaleString('he-IL')}
-🎬 ${session.data.videos} סרטונים × ₪${config.priceVideo} = ₪${(n * config.priceVideo).toLocaleString('he-IL')}
-━━━━━━━━━━━━━━━
-💵 *סה"כ: ₪${autoTotal.toLocaleString('he-IL')}*
-
-שלח *אישור* ליצירת PDF 📄
-או שלח מחיר אחר לעקוף (לדוגמה: 1200)`
+      clients[idx].status = text;
+      clients[idx].updatedAt = new Date().toISOString();
+      saveClients(clients);
+      clearSession(userId);
+      return ctx.reply(
+        `✅ *סטטוס עודכן!*\n\n*${clients[idx].business}*\n📝 ${text}`,
+        { parse_mode: 'Markdown' }
       );
-      break;
     }
 
-    case 'quote_confirm': {
-      // בדוק אם שלחו מחיר ידני
-      if (text !== 'אישור') {
+    if (state === 'quote_select') {
+      const idx = parseInt(text) - 1;
+      const clients = getClients();
+      if (idx < 0 || idx >= clients.length) {
+        return ctx.reply('❌ מספר לא תקין. נסה שוב.', { parse_mode: 'Markdown' });
+      }
+      data.clientIdx = idx;
+      data.businessName = clients[idx].business;
+      data.clientName = clients[idx].name;
+      session.state = 'quote_photos';
+      return ctx.reply(
+        `📸 כמה *תמונות*? (₪${config.pricePhoto} לתמונה)\n_שלח 0 אם אין_`,
+        { parse_mode: 'Markdown' }
+      );
+    }
+
+    if (state === 'quote_photos') {
+      const n = parseInt(text);
+      if (isNaN(n) || n < 0) {
+        return ctx.reply('❌ נא להזין מספר תקין (לדוגמה: 5 או 0)', { parse_mode: 'Markdown' });
+      }
+      data.photos = n;
+      session.state = 'quote_videos';
+      return ctx.reply(
+        `🎬 כמה *סרטונים*? (₪${config.priceVideo} לסרטון)\n_שלח 0 אם אין_`,
+        { parse_mode: 'Markdown' }
+      );
+    }
+
+    if (state === 'quote_videos') {
+      const n = parseInt(text);
+      if (isNaN(n) || n < 0) {
+        return ctx.reply('❌ נא להזין מספר תקין', { parse_mode: 'Markdown' });
+      }
+      data.videos = n;
+      const autoTotal = (data.photos * config.pricePhoto) + (n * config.priceVideo);
+      data.total = autoTotal;
+      session.state = 'quote_confirm';
+      
+      return ctx.reply(
+        `💰 *סיכום הצעת מחיר*\n\n` +
+        `👤 ${data.clientName}\n` +
+        `🏢 ${data.businessName}\n` +
+        `📸 ${data.photos} תמונות × ₪${config.pricePhoto} = ₪${(data.photos * config.pricePhoto)}\n` +
+        `🎬 ${data.videos} סרטונים × ₪${config.priceVideo} = ₪${(n * config.priceVideo)}\n` +
+        `━━━━━━━━━━━━━━━\n` +
+        `💵 *סה"כ: ₪${autoTotal}*\n\n` +
+        `שלח *אישור* ליצירת PDF 📄\n` +
+        `או שלח מחיר אחר (לדוגמה: 1200)`,
+        { parse_mode: 'Markdown' }
+      );
+    }
+
+    if (state === 'quote_confirm') {
+      if (text.toLowerCase() !== 'אישור') {
         const override = parseInt(text.replace(/[^\d]/g, ''));
         if (!isNaN(override) && override > 0) {
-          session.data.total = override;
+          data.total = override;
         } else {
-          await msg.reply('❌ שלח *אישור* ליצירת PDF, או מחיר מספרי (לדוגמה: 1200)');
-          return;
+          return ctx.reply('❌ שלח *אישור* או מחיר מספרי', { parse_mode: 'Markdown' });
         }
       }
 
-      await msg.reply('⏳ מייצר PDF, רגע...');
+      await ctx.reply('⏳ מייצר PDF...');
 
       try {
-        const pdfPath = await generateQuotePDF({
-          clientName:   session.data.clientName,
-          businessName: session.data.businessName,
-          photos:       session.data.photos,
-          videos:       session.data.videos,
-          total:        session.data.total,
-          pricePhoto:   config.pricePhoto,
-          priceVideo:   config.priceVideo
+        const pdfPath = generateQuotePDF({
+          clientName: data.clientName,
+          businessName: data.businessName,
+          photos: data.photos,
+          videos: data.videos,
+          total: data.total,
+          pricePhoto: config.pricePhoto,
+          priceVideo: config.priceVideo
         });
 
-        const media    = MessageMedia.fromFilePath(pdfPath);
-        media.filename = `${session.data.businessName}. הצעת מחיר.pdf`;
+        await ctx.replyWithDocument(
+          { source: fs.createReadStream(pdfPath) },
+          { caption: `📄 הצעה עבור ${data.businessName}\nסה"כ: ₪${data.total}` }
+        );
 
-        await client.sendMessage(phone, media, {
-          caption:
-`📄 *הצעת מחיר – ${session.data.businessName}*
-סה"כ: ₪${session.data.total.toLocaleString('he-IL')}
-
-לאחר אישור הלקוח, שלח:
-_${session.data.businessName} אישר את ההצעה_`
-        });
-
-        clearSession(phone);
+        clearSession(userId);
       } catch (e) {
-        console.error('❌ שגיאה ביצירת PDF:', e.message);
-        await msg.reply('❌ שגיאה ביצירת ה-PDF. בדוק את הלוגים.');
-        clearSession(phone);
+        console.error('❌ שגיאה:', e);
+        clearSession(userId);
+        return ctx.reply('❌ שגיאה ביצירת ה-PDF');
       }
-      break;
     }
 
-    // ── אישור הצעה → הוספה ללקוחות ──────────────────────────────
-    case 'approval_status': {
-      const clients = getClients();
-      clients.push({
-        name:      session.data.biz,
-        business:  session.data.biz,
-        status:    text,
-        addedAt:   new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
-      saveClients(clients);
-      clearSession(phone);
-      await msg.reply(
-`🎉 *${session.data.biz} נוסף ללקוחות הפעילים!*
-
-📝 סטטוס: ${text}
-יופיע בעדכון הבוקר הבא ב-${config.morningTime} ☀️`
-      );
-      break;
-    }
-
-    default:
-      clearSession(phone);
-      await msg.reply('⚠️ משהו השתבש. שלח *תפריט* להתחלה מחדש.');
+  } catch (err) {
+    console.error('❌ שגיאה בטיפול בודעה:', err);
+    clearSession(userId);
+    ctx.reply('❌ משהו השתבש. שלח /menu להתחלה מחדש.');
   }
 }
 
-// ─── Start ────────────────────────────────────────────────────
-client.initialize();
+// ─── Scheduler (Daily Status) ─────────────────────────────────
+if (process.env.NODE_ENV !== 'test') {
+  cron.schedule('30 9 * * *', async () => {
+    console.log('📅 שולח דיווח בוקר...');
+    const clients = getClients();
+    if (clients.length > 0) {
+      const list = clients
+        .map((c, i) => `${i + 1}. *${c.business}* (${c.name})\n   📌 ${c.status}`)
+        .join('\n');
+      console.log('✅ דיווח בוקר מוכן:\n' + list);
+    }
+  });
+  console.log('⏰ Scheduler פעיל – דיווח בוקר כל יום ב-9:30');
+}
+
+// ─── Start Bot ────────────────────────────────────────────────
+bot.launch()
+  .then(() => {
+    console.log('🤖 סמי בוט טלגרם כעת פעיל! 🚀');
+    console.log(`💬 שלח לבוט: /start`);
+  })
+  .catch(err => console.error('❌ שגיאה בהפעלת הבוט:', err));
+
+// Handle graceful shutdown
+process.once('SIGINT', () => {
+  console.log('⛔ בוט בהפסקה...');
+  bot.stop('SIGINT');
+});
+process.once('SIGTERM', () => {
+  console.log('⛔ בוט בהפסקה...');
+  bot.stop('SIGTERM');
+});
