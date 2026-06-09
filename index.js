@@ -7,11 +7,11 @@ const QRCode  = require('qrcode');
 const express = require('express');
 const fs      = require('fs');
 const { execSync } = require('child_process');
+const puppeteer = require('puppeteer');
 const config  = require('./config');
 const { startScheduler }   = require('./scheduler');
 const { generateQuotePDF } = require('./pdfGenerator');
 
-// Support Railway / Nixpacks system Chromium install
 const systemChromiumPath = '/run/current-system/sw/bin/chromium';
 
 // ─── QR Web Server ────────────────────────────────────────────
@@ -136,8 +136,8 @@ function findChromium() {
 }
 
 // ─── WhatsApp Client ──────────────────────────────────────────
-const chromiumPath = findChromium();
-console.log('PUPPETEER_EXECUTABLE_PATH =', process.env.PUPPETEER_EXECUTABLE_PATH || 'unset');
+const chromiumPath = findChromium() || puppeteer.executablePath();
+console.log('Using Chromium path:', chromiumPath);
 const client = new Client({
   authStrategy: new LocalAuth(),
   puppeteer: {

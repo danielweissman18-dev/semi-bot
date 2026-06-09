@@ -61,10 +61,10 @@ logo.png
 > אם אתה רצה ב-Railway, הוסף גם את משתני הסביבה האלה ב-Settings → Environment:
 >
 > ```
-> PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-> PUPPETEER_EXECUTABLE_PATH=/run/current-system/sw/bin/chromium
 > PORT=8080
 > ```
+>
+> אל תוסיף את `PUPPETEER_SKIP_CHROMIUM_DOWNLOAD` או `PUPPETEER_EXECUTABLE_PATH` כי עכשיו הבוט משתמש בדפדפן שנמצא דרך Puppeteer.
 
 ### 2.4 – סרוק QR Code
 1. לאחר ה-Deploy, לחץ על השירות → לשונית **Logs**
