@@ -6,15 +6,13 @@ const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const QRCode  = require('qrcode');
 const express = require('express');
 const fs      = require('fs');
+const { execSync } = require('child_process');
 const config  = require('./config');
 const { startScheduler }   = require('./scheduler');
 const { generateQuotePDF } = require('./pdfGenerator');
 
 // Support Railway / Nixpacks system Chromium install
 const systemChromiumPath = '/run/current-system/sw/bin/chromium';
-if (!process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(systemChromiumPath)) {
-  process.env.PUPPETEER_EXECUTABLE_PATH = systemChromiumPath;
-}
 
 // ─── QR Web Server ────────────────────────────────────────────
 const app = express();
@@ -77,17 +75,26 @@ function getUserName(phone) {
 // ─── מציא נתיב Chromium אוטומטית ─────────────────────────────
 function findChromium() {
   const isWindows = process.platform === 'win32';
+  const envPath = process.env.PUPPETEER_EXECUTABLE_PATH;
+
+  if (envPath) {
+    if (fs.existsSync(envPath)) {
+      console.log('✅ משתמש ב-PUPPETEER_EXECUTABLE_PATH:', envPath);
+      return envPath;
+    }
+    console.warn(`⚠️ PUPPETEER_EXECUTABLE_PATH לא נמצא: ${envPath}. מתעלם ממנו.`);
+    delete process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+
   const candidatePaths = [
-    process.env.PUPPETEER_EXECUTABLE_PATH,
+    '/run/current-system/sw/bin/chromium',
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
     '/usr/bin/google-chrome',
-    '/run/current-system/sw/bin/chromium',
   ];
 
   if (isWindows) {
     candidatePaths.unshift(
-      process.env.PUPPETEER_EXECUTABLE_PATH,
       `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`,
       `${process.env.PROGRAMFILES}\\Google\\Chrome\\Application\\chrome.exe`,
       `${process.env['PROGRAMFILES(X86)']}\\Google\\Chrome\\Application\\chrome.exe`,
@@ -107,7 +114,6 @@ function findChromium() {
 
   if (!isWindows) {
     try {
-      const { execSync } = require('child_process');
       const found = execSync('which chromium || which chromium-browser || which google-chrome', { encoding: 'utf8' })
         .trim()
         .split('\n')[0];
@@ -115,7 +121,14 @@ function findChromium() {
         console.log('✅ נמצא Chromium דרך which:', found);
         return found;
       }
-    } catch {}
+    } catch {
+      // ignore
+    }
+  }
+
+  if (process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD === 'true') {
+    console.warn('⚠️ לא נמצא דפדפן במערכת, בוטל PUPPETEER_SKIP_CHROMIUM_DOWNLOAD כדי לאפשר הורדה');
+    delete process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD;
   }
 
   console.log('⚠️ לא נמצא Chromium/Chrome – מנסה ללא נתיב');
@@ -124,12 +137,19 @@ function findChromium() {
 
 // ─── WhatsApp Client ──────────────────────────────────────────
 const chromiumPath = findChromium();
-console.log('PUPPETEER_EXECUTABLE_PATH =', process.env.PUPPETEER_EXECUTABLE_PATH);
+console.log('PUPPETEER_EXECUTABLE_PATH =', process.env.PUPPETEER_EXECUTABLE_PATH || 'unset');
 const client = new Client({
   authStrategy: new LocalAuth(),
   puppeteer: {
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-    headless: 'new',
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--single-process',
+      '--no-zygote'
+    ],
+    headless: true,
     ...(chromiumPath ? { executablePath: chromiumPath } : {})
   }
 });
