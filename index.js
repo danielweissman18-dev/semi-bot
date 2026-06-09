@@ -10,6 +10,12 @@ const config  = require('./config');
 const { startScheduler }   = require('./scheduler');
 const { generateQuotePDF } = require('./pdfGenerator');
 
+// Support Railway / Nixpacks system Chromium install
+const systemChromiumPath = '/run/current-system/sw/bin/chromium';
+if (!process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(systemChromiumPath)) {
+  process.env.PUPPETEER_EXECUTABLE_PATH = systemChromiumPath;
+}
+
 // ─── QR Web Server ────────────────────────────────────────────
 const app = express();
 let currentQR = null;
@@ -118,6 +124,7 @@ function findChromium() {
 
 // ─── WhatsApp Client ──────────────────────────────────────────
 const chromiumPath = findChromium();
+console.log('PUPPETEER_EXECUTABLE_PATH =', process.env.PUPPETEER_EXECUTABLE_PATH);
 const client = new Client({
   authStrategy: new LocalAuth(),
   puppeteer: {

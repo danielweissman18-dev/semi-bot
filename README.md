@@ -58,6 +58,14 @@ logo.png
 2. בחר את `sami-bot`
 3. Railway יזהה אוטומטית שזה Node.js ויריץ `npm start`
 
+> אם אתה רצה ב-Railway, הוסף גם את משתני הסביבה האלה ב-Settings → Environment:
+>
+> ```
+> PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+> PUPPETEER_EXECUTABLE_PATH=/run/current-system/sw/bin/chromium
+> PORT=8080
+> ```
+
 ### 2.4 – סרוק QR Code
 1. לאחר ה-Deploy, לחץ על השירות → לשונית **Logs**
 2. תראה QR Code בלוגים
